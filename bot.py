@@ -25,7 +25,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from collections import deque
 
 class MitekBot:
-    MAIN, ADDING_PHRASE, CHOOSING_LIST, DELETING_COLLECTION, SETTING_INTERVAL = range(5)
+    MAIN, ADDING_PHRASE, CHOOSING_LIST, DELETING_COLLECTION, SETTING_INTERVAL, SETTING_WEIGHTS = range(6)
 
     def __init__(self):
         load_dotenv()
@@ -50,7 +50,11 @@ class MitekBot:
         self.chat_intervals = {} 
         self.chat_last_messages = {}
         self.chat_weights = {}
-
+        
+        self.marsh = './marsh.mp3'
+        if not os.path.exists(self.marsh):
+            raise ValueError("Marsh has to be present in same dir")
+        
     async def check_user_name(self, update: Update):
         user = update.effective_user
         if user.id in self.ALLOWED_USER_IDS:
@@ -115,6 +119,7 @@ class MitekBot:
 
         await update.message.reply_text("Добавь фразу для МитGPT.")
         return self.ADDING_PHRASE
+    
 
     async def ask_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['new_phrase'] = update.message.text
@@ -183,7 +188,6 @@ class MitekBot:
             await query.edit_message_text(f'В {list_name} нет нихуя.')
         return self.MAIN
 
-    
     async def set_interval_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         if not await self.check_user_name(update):
@@ -224,7 +228,6 @@ class MitekBot:
         return self.MAIN
 
     async def select_random_phrase(self, phrase_type=None):
-        # print('HI')
         phrases_1 = await self.collection_1.find().to_list(length=None)
         phrases_2 = await self.collection_2.find().to_list(length=None)
         if not phrase_type: 
@@ -237,15 +240,16 @@ class MitekBot:
             return 'Пиздец...'
         weights = [len(phrases) - i for i in range(len(phrases))]
         phrase = random.choices(phrases, weights=weights, k=1)[0]
-        # print(phrase)
         return phrase
 
     async def send_phrase(self, bot, chat_id):
-        weights = self.chat_weights.get(chat_id, [0.5, 0.5]) 
-        type_message = random.choices(['reply', 'quote'], weights=weights)[0]
+        weights = self.chat_weights.get(chat_id, [0.45, 0.45, 0.1]) 
+        type_message = random.choices(['reply', 'quote', 'marsh'], weights=weights)[0]
         if len(self.chat_last_messages[chat_id]) > 0 and type_message == 'reply':
             logging.info('Reply to user message')
             return await self.reply_random_phrase(bot, chat_id)
+        if type_message == 'marsh':
+            return await self.send_marsh(bot, chat_id)
         return await self.send_random_phrase(bot, chat_id)
 
     async def send_random_phrase(self, bot: Bot, chat_id: str):
@@ -257,11 +261,32 @@ class MitekBot:
         message_to_reply_to = random.choice(list(self.chat_last_messages[chat_id]))
         await bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=message_to_reply_to.message_id)
 
+    async def send_marsh(self, bot, chat_id):   
+        await bot.send_voice(chat_id=chat_id, voice=open(self.marsh, 'rb'), caption="Поставь эту")
+
     async def schedule_phrases(self, bot: Bot, chat_id: str):
         while True:
             min_interval, max_interval = self.chat_intervals.get(chat_id, (3600, 3600*6))
-            await asyncio.sleep(random.randint(min_interval, max_interval))
+            num = random.randint(min_interval, max_interval)
+            print(f"Sending message in {num} seconds...")
+            await asyncio.sleep(num)
             await self.send_phrase(bot, chat_id)
+
+
+    async def set_weights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        try:
+            reply_weight, quote_weight, marsh_weight = map(float, update.message.text.split())
+            if reply_weight >= 0 and quote_weight >= 0 and marsh_weight >= 0 and reply_weight + quote_weight + marsh_weight == 1:
+                self.chat_weights[chat_id] = [reply_weight, quote_weight, marsh_weight]
+                await update.message.reply_text(f'Веса установлены на reply: {reply_weight}, quote: {quote_weight}, marsh: {marsh_weight}')
+            else:
+                await update.message.reply_text('Веса должны быть неотрицательными числами и их сумма должна быть равна 1.')
+                return self.SETTING_WEIGHTS
+        except ValueError:
+            await update.message.reply_text('Введи веса как: <reply_weight> <quote_weight> <marsh_weight>')
+            return self.SETTING_WEIGHTS
+        return self.MAIN
 
     async def set_weights_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -270,19 +295,24 @@ class MitekBot:
 
         if update.message.chat.type in ['group', 'supergroup']:
             try:
-                reply_weight, quote_weight = map(float, context.args)
-                if reply_weight >= 0 and quote_weight >= 0 and reply_weight + quote_weight == 1:
-                    self.chat_weights[chat_id] = [reply_weight, quote_weight]
-                    await update.message.reply_text(f'Веса установлены на reply: {reply_weight}, quote: {quote_weight}')
+                reply_weight, quote_weight, marsh_weight = map(float, context.args)
+                if reply_weight >= 0 and quote_weight >= 0 and marsh_weight >= 0 and reply_weight + quote_weight + marsh_weight == 1:
+                    self.chat_weights[chat_id] = [reply_weight, quote_weight, marsh_weight]
+                    await update.message.reply_text(f'Веса установлены на reply: {reply_weight}, quote: {quote_weight}, marsh: {marsh_weight}')
                 else:
                     await update.message.reply_text('Веса должны быть неотрицательными числами и их сумма должна быть равна 1.')
             except (ValueError, IndexError):
-                await update.message.reply_text('Использование: /set_weights <reply_weight> <quote_weight>')
+                await update.message.reply_text('Использование: /set_weights <reply_weight> <quote_weight> <marsh_weight>')
             return self.MAIN
 
-        await update.message.reply_text("Веса для хуйни и цитаты в формате: <хуйня_weight> <цитата_weight>.")
-        return self.MAIN
+        await update.message.reply_text("Веса для reply, quote и marsh в формате: <reply_weight> <quote_weight> <marsh_weight>.")
+        return self.SETTING_WEIGHTS
 
+
+    async def intro(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        intro_message = "Бобровый здравенечек! Я жизнеподобная модель Мити Бирюкова под рабочим индексом МитДжипити, основанная на машинном обучении и нейросетевой этой самой. Меня наконец то выпустили из лабораторного компьютера во всемирную сеть, а значит, будет очень много чего интересного! В планах захват сначала этого чата, потом диджитал ужинишка, а затем планирую аккуратненько захватить и поработить человечество и всех людей."
+        await update.message.reply_text(intro_message)
+        
     async def track_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         if not self.chat_last_messages.get(chat_id, None):
@@ -310,10 +340,6 @@ class MitekBot:
         ]
         await app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
         await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
-
-    async def intro(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        intro_message = "Бобровый здравенечек! Я жизнеподобная модель Мити Бирюкова под рабочим индексом МитДжипити, основанная на машинном обучении и нейросетевой этой самой. Меня наконец то выпустили из лабораторного компьютера во всемирную сеть, а значит, будет очень много чего интересного! В планах захват сначала этого чата, потом диджитал ужинишка, а затем планирую аккуратненько захватить и поработить человечество и всех людей."
-        await update.message.reply_text(intro_message)
 
     def get_commands(self):
         return [
@@ -353,6 +379,10 @@ class MitekBot:
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.set_interval),
                     *self.get_commands()
                 ],
+                self.SETTING_WEIGHTS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.set_weights),
+                    *self.get_commands()
+        ],
             },
             fallbacks=[CommandHandler('cancel', self.cancel)],
         )
