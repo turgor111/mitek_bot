@@ -224,7 +224,7 @@ class MitekBot:
         return self.MAIN
 
     async def select_random_phrase(self, phrase_type=None):
-        print('HI')
+        # print('HI')
         phrases_1 = await self.collection_1.find().to_list(length=None)
         phrases_2 = await self.collection_2.find().to_list(length=None)
         if not phrase_type: 
@@ -237,7 +237,7 @@ class MitekBot:
             return 'Пиздец...'
         weights = [len(phrases) - i for i in range(len(phrases))]
         phrase = random.choices(phrases, weights=weights, k=1)[0]
-        print(phrase)
+        # print(phrase)
         return phrase
 
     async def send_phrase(self, bot, chat_id):
@@ -259,7 +259,7 @@ class MitekBot:
 
     async def schedule_phrases(self, bot: Bot, chat_id: str):
         while True:
-            min_interval, max_interval = self.chat_intervals.get(chat_id, (1, 5))
+            min_interval, max_interval = self.chat_intervals.get(chat_id, (3600, 3600*6))
             await asyncio.sleep(random.randint(min_interval, max_interval))
             await self.send_phrase(bot, chat_id)
 
@@ -305,9 +305,15 @@ class MitekBot:
             BotCommand("delete_recent_phrase", "Удалить последнюю фразу"),
             BotCommand("set_interval", "Установить интервал для отправки фраз"),
             BotCommand("set_weights", "Установить вероятность цитаты/хуйни"),
+            BotCommand('intro', "Предатавиться"),
+            
         ]
         await app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
         await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+
+    async def intro(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        intro_message = "Бобровый здравенечек! Я жизнеподобная модель Мити Бирюкова под рабочим индексом МитДжипити, основанная на машинном обучении и нейросетевой этой самой. Меня наконец то выпустили из лабораторного компьютера во всемирную сеть, а значит, будет очень много чего интересного! В планах захват сначала этого чата, потом диджитал ужинишка, а затем планирую аккуратненько захватить и поработить человечество и всех людей."
+        await update.message.reply_text(intro_message)
 
     def get_commands(self):
         return [
@@ -317,6 +323,7 @@ class MitekBot:
             CommandHandler('set_interval', self.set_interval_command),
             CommandHandler('set_weights', self.set_weights_command), 
             CommandHandler('stop_mitek', self.stop),
+            CommandHandler('intro', self.intro),
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.track_message) 
         ]
     
