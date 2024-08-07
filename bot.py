@@ -280,6 +280,16 @@ class MitekBot:
             await asyncio.sleep(num)
             await self.send_phrase(bot, chat_id)
 
+    async def mention_or_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        logging.info(f"Mention or reply detected in chat {chat_id}.")
+        
+        if not await self.check_user_name(update):
+            return
+
+        phrase = await self.select_random_phrase(phrase_type='хуйня')
+        await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=update.message.message_id)
+
 
     async def set_weights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -361,7 +371,8 @@ class MitekBot:
             CommandHandler('set_weights', self.set_weights_command), 
             CommandHandler('stop_mitek', self.stop),
             CommandHandler('intro', self.intro),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self.track_message) 
+            MessageHandler(filters.Regex('@mitgptbot') , self.mention_or_reply),
+            MessageHandler(filters.REPLY, self.mention_or_reply), 
         ]
     
     def run(self):
