@@ -30,9 +30,17 @@ class MitekBot:
     def __init__(self):
         load_dotenv()
         logging.basicConfig(
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-            level=logging.INFO
+            format='%(asctime)s | %(name)s | %(levelname)s | %(message)s', 
+            level=logging.INFO,
+            handlers=[
+                logging.FileHandler("bot.log"),
+                logging.StreamHandler()
+            ]
         )
+
+        logging.getLogger("telegram").setLevel(logging.WARNING)
+        logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
         self.MONGO_URI = 'mongodb://127.0.0.1:27017/'
         self.client = AsyncIOMotorClient(self.MONGO_URI)
@@ -240,13 +248,13 @@ class MitekBot:
             return 'Пиздец...'
         weights = [len(phrases) - i for i in range(len(phrases))]
         phrase = random.choices(phrases, weights=weights, k=1)[0]
+        logging.info(f"Sending phrase '{phrase}'...")
         return phrase
 
     async def send_phrase(self, bot, chat_id):
-        weights = self.chat_weights.get(chat_id, [0.45, 0.45, 0.1]) 
+        weights = self.chat_weights.get(chat_id, [0.49, 0.49, 0.02]) 
         type_message = random.choices(['reply', 'quote', 'marsh'], weights=weights)[0]
         if len(self.chat_last_messages[chat_id]) > 0 and type_message == 'reply':
-            logging.info('Reply to user message')
             return await self.reply_random_phrase(bot, chat_id)
         if type_message == 'marsh':
             return await self.send_marsh(bot, chat_id)
@@ -266,9 +274,9 @@ class MitekBot:
 
     async def schedule_phrases(self, bot: Bot, chat_id: str):
         while True:
-            min_interval, max_interval = self.chat_intervals.get(chat_id, (3600, 3600*6))
+            min_interval, max_interval = self.chat_intervals.get(chat_id, (1, 3600*6))
             num = random.randint(min_interval, max_interval)
-            print(f"Sending message in {num} seconds...")
+            logging.info(f"Sending message in {num} seconds...")
             await asyncio.sleep(num)
             await self.send_phrase(bot, chat_id)
 
@@ -340,6 +348,9 @@ class MitekBot:
         ]
         await app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
         await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+   
+    async def handle_error(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
     def get_commands(self):
         return [
@@ -391,6 +402,7 @@ class MitekBot:
         
         application.add_handler(conv_handler)
         application.add_handler(CallbackQueryHandler(self.delete_phrase_callback, pattern='^delete_')) 
+        application.add_error_handler(self.handle_error)
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
