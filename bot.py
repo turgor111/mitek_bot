@@ -296,7 +296,6 @@ class MitekBot:
     async def mention_or_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         logging.info(f"Mention or reply detected in chat {chat_id}.")
-        
         if not await self.check_user_name(update):
             return
         
@@ -304,7 +303,7 @@ class MitekBot:
             self.recent_phrases[chat_id] = deque(maxlen=20)
         
         reply = update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id
-        mention = update.message.entities and any(entity.type == "mention" and entity.user.id == context.bot.id for entity in update.message.entities)
+        mention = '@mitgptbot' in update.message.text
         
         if reply or mention:
             phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
