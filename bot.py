@@ -58,6 +58,7 @@ class MitekBot:
         self.chat_intervals = {} 
         self.chat_last_messages = {}
         self.chat_weights = {}
+        self.recent_phrases = {}
         
         self.marsh = './marsh.mp3'
         if not os.path.exists(self.marsh):
@@ -75,6 +76,10 @@ class MitekBot:
         self.chat_states[chat_id] = self.MAIN
         if not self.chat_last_messages.get(chat_id, None):
             self.chat_last_messages[chat_id] = deque(maxlen=10)
+        
+        if not self.recent_phrases.get(chat_id, None):
+            self.recent_phrases[chat_id] = deque(maxlen=20) 
+            
         if not await self.check_user_name(update):
             return ConversationHandler.END
         
@@ -235,7 +240,7 @@ class MitekBot:
         await update.message.reply_text("Операция отменена.")
         return self.MAIN
 
-    async def select_random_phrase(self, phrase_type=None):
+    async def select_random_phrase(self, chat_id, phrase_type=None):
         phrases_1 = await self.collection_1.find().to_list(length=None)
         phrases_2 = await self.collection_2.find().to_list(length=None)
         if not phrase_type: 
@@ -246,8 +251,16 @@ class MitekBot:
             phrases = [doc['phrase'] for doc in phrases_2]
         if not phrases:
             return 'Пиздец...'
-        weights = [len(phrases) - i for i in range(len(phrases))]
-        phrase = random.choices(phrases, weights=weights, k=1)[0]
+        
+        available_phrases = [phrase for phrase in phrases if phrase not in self.recent_phrases.get(chat_id, [])]
+
+        
+        if  not available_phrases:
+            self.recent_phrases[chat_id].clear()
+            available_phrases = phrases
+        
+        phrase = random.choices(available_phrases)[0]
+        self.recent_phrases[chat_id].append(phrase)
         logging.info(f"Sending phrase '{phrase}'...")
         return phrase
 
@@ -261,11 +274,11 @@ class MitekBot:
         return await self.send_random_phrase(bot, chat_id)
 
     async def send_random_phrase(self, bot: Bot, chat_id: str):
-        phrase = await self.select_random_phrase()
+        phrase = await self.select_random_phrase(chat_id)
         await bot.send_message(chat_id=chat_id, text=phrase)
 
     async def reply_random_phrase(self, bot: Bot, chat_id: str):
-        phrase = await self.select_random_phrase(phrase_type='хуйня')
+        phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
         message_to_reply_to = random.choice(list(self.chat_last_messages[chat_id]))
         await bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=message_to_reply_to.message_id)
 
@@ -283,13 +296,12 @@ class MitekBot:
     async def mention_or_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         logging.info(f"Mention or reply detected in chat {chat_id}.")
-        
         if not await self.check_user_name(update):
             return
-
-        phrase = await self.select_random_phrase(phrase_type='хуйня')
+        if not self.recent_phrases.get(chat_id, None):
+            self.recent_phrases[chat_id] = deque(maxlen=20)
+        phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
         await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=update.message.message_id)
-
 
     async def set_weights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -335,6 +347,8 @@ class MitekBot:
         chat_id = update.effective_chat.id
         if not self.chat_last_messages.get(chat_id, None):
             self.chat_last_messages[chat_id] = deque(maxlen=10)
+        if not self.recent_phrases.get(chat_id, None):
+            self.recent_phrases[chat_id] = deque(maxlen=20) 
         if update.message:
             chat_type = update.message.chat.type
             chat_id = update.effective_chat.id
@@ -408,8 +422,7 @@ class MitekBot:
             },
             fallbacks=[CommandHandler('cancel', self.cancel)],
         )
-
-        asyncio.get_event_loop().run_until_complete(self.set_commands(application))
+        asyncio.get_event_loop().run_until_complete(self.set_commands(application))    
         
         application.add_handler(conv_handler)
         application.add_handler(CallbackQueryHandler(self.delete_phrase_callback, pattern='^delete_')) 
