@@ -74,6 +74,7 @@ class MitekBot:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         self.chat_states[chat_id] = self.MAIN
+        
         if not self.chat_last_messages.get(chat_id, None):
             self.chat_last_messages[chat_id] = deque(maxlen=10)
         
@@ -88,7 +89,7 @@ class MitekBot:
             return ConversationHandler.END
             
         await context.bot.send_message(chat_id=chat_id, text="Митек завелся. Митек поехал.")
-        task = asyncio.create_task(self.schedule_phrases(context.bot, chat_id))
+        task = asyncio.create_task(self.schedule_phrases(context, chat_id))
         self.scheduled_tasks[chat_id] = task
         return self.MAIN
     
@@ -96,7 +97,6 @@ class MitekBot:
         chat_id = update.effective_chat.id
         if not await self.check_user_name(update):
             return ConversationHandler.END
-
         task = self.scheduled_tasks.get(chat_id)
         if task:
             task.cancel()
@@ -104,7 +104,7 @@ class MitekBot:
             await context.bot.send_message(chat_id=chat_id, text="Митек остановлен.")
         else:
             await context.bot.send_message(chat_id=chat_id, text="Митек не был запущен.")
-        self.chat_states.pop(chat_id, None)
+        del self.chat_states[chat_id]
         return self.MAIN
 
     async def add_phrases(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,13 +240,13 @@ class MitekBot:
         await update.message.reply_text("Операция отменена.")
         return self.MAIN
 
-    async def select_random_phrase(self, chat_id, phrase_type=None):
+    async def select_random_phrase(self, context, chat_id, phrase_type=None):
         phrases_1 = await self.collection_1.find().to_list(length=None)
         phrases_2 = await self.collection_2.find().to_list(length=None)
-        if not phrase_type: 
+        if not phrase_type:
             phrases = [doc['phrase'] for doc in phrases_1 + phrases_2]
         elif phrase_type == 'хуйня':
-            phrases = [doc['phrase'] for doc in phrases_1]    
+            phrases = [doc['phrase'] for doc in phrases_1]
         elif phrase_type == 'цитаты':
             phrases = [doc['phrase'] for doc in phrases_2]
         if not phrases:
@@ -254,44 +254,45 @@ class MitekBot:
         
         available_phrases = [phrase for phrase in phrases if phrase not in self.recent_phrases.get(chat_id, [])]
 
-        
-        if  not available_phrases:
+        if not available_phrases:
             self.recent_phrases[chat_id].clear()
             available_phrases = phrases
         
         phrase = random.choices(available_phrases)[0]
         self.recent_phrases[chat_id].append(phrase)
         logging.info(f"Sending phrase '{phrase}'...")
+        await context.bot.send_chat_action(chat_id=chat_id, action='typing')
+        await asyncio.sleep(0.2 * len(phrase))
         return phrase
 
-    async def send_phrase(self, bot, chat_id):
+    async def send_phrase(self, context,  chat_id):
         weights = self.chat_weights.get(chat_id, [0.49, 0.49, 0.02]) 
         type_message = random.choices(['reply', 'quote', 'marsh'], weights=weights)[0]
         if len(self.chat_last_messages[chat_id]) > 0 and type_message == 'reply':
-            return await self.reply_random_phrase(bot, chat_id)
+            return await self.reply_random_phrase(context, chat_id)
         if type_message == 'marsh':
-            return await self.send_marsh(bot, chat_id)
-        return await self.send_random_phrase(bot, chat_id)
+            return await self.send_marsh(context, chat_id)
+        return await self.send_random_phrase(context, chat_id)
 
-    async def send_random_phrase(self, bot: Bot, chat_id: str):
-        phrase = await self.select_random_phrase(chat_id)
-        await bot.send_message(chat_id=chat_id, text=phrase)
+    async def send_random_phrase(self, context, chat_id: str):
+        phrase = await self.select_random_phrase(context, chat_id)
+        await context.bot.send_message(chat_id=chat_id, text=phrase)
 
-    async def reply_random_phrase(self, bot: Bot, chat_id: str):
-        phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
+    async def reply_random_phrase(self, context, chat_id: str):
+        phrase = await self.select_random_phrase(context, chat_id, phrase_type='хуйня')
         message_to_reply_to = random.choice(list(self.chat_last_messages[chat_id]))
-        await bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=message_to_reply_to.message_id)
+        await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=message_to_reply_to.message_id)
 
-    async def send_marsh(self, bot, chat_id):   
-        await bot.send_voice(chat_id=chat_id, voice=open(self.marsh, 'rb'), caption="Поставь эту")
+    async def send_marsh(self, context, chat_id):   
+        await context.bot.send_voice(chat_id=chat_id, voice=open(self.marsh, 'rb'), caption="Поставь эту")
 
-    async def schedule_phrases(self, bot: Bot, chat_id: str):
+    async def schedule_phrases(self, context, chat_id):
         while True:
             min_interval, max_interval = self.chat_intervals.get(chat_id, (1, 3600*6))
             num = random.randint(min_interval, max_interval)
             logging.info(f"Sending message in {num} seconds...")
             await asyncio.sleep(num)
-            await self.send_phrase(bot, chat_id)
+            await self.send_phrase(context, chat_id)
 
     async def mention_or_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -303,11 +304,14 @@ class MitekBot:
             self.recent_phrases[chat_id] = deque(maxlen=20)
         
         reply = update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id
-        mention = '@mitgptbot' in update.message.text
+        mention = '@mitgptbot' in update.message.text and not update.message.text[0] == '/'
         
         if reply or mention:
-            phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
+            logging.info(f"Reply or mention detected. Reply: {reply}, Mention: {mention}")
+            phrase = await self.select_random_phrase(context, chat_id, phrase_type='хуйня')
             await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=update.message.message_id)
+        else:
+            logging.info("No reply or mention detected.")
 
     async def set_weights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -351,16 +355,20 @@ class MitekBot:
         
     async def track_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
+        
         if not self.chat_last_messages.get(chat_id, None):
             self.chat_last_messages[chat_id] = deque(maxlen=10)
+            
         if not self.recent_phrases.get(chat_id, None):
             self.recent_phrases[chat_id] = deque(maxlen=20) 
+            
         if update.message:
             chat_type = update.message.chat.type
             chat_id = update.effective_chat.id
             user = update.effective_user
             text = update.message.text if update.message.text else "Non-text message"
             logging.info(f'Received message in {chat_type} chat (ID: {chat_id}) from user {user.id}: {text[:20]}...')
+            await self.mention_or_reply(update, context)
             self.chat_last_messages[chat_id].append(update.message)
         else:
             logging.info(f'Received update of type: {update.update_id}')
@@ -391,8 +399,6 @@ class MitekBot:
             CommandHandler('set_weights', self.set_weights_command), 
             CommandHandler('stop_mitek', self.stop),
             CommandHandler('intro', self.intro),
-            MessageHandler(filters.Regex('@mitgptbot') , self.mention_or_reply),
-            MessageHandler(filters.REPLY, self.mention_or_reply), 
         ]
     
     def run(self):
@@ -406,11 +412,9 @@ class MitekBot:
             entry_points=self.get_commands(),
             states={
                 self.MAIN: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.track_message),
                     *self.get_commands()
                 ],
                 self.ADDING_PHRASE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.ask_list),
                     *self.get_commands()
                 ],
                 self.CHOOSING_LIST: [
@@ -418,11 +422,9 @@ class MitekBot:
                     *self.get_commands()
                 ],
                 self.SETTING_INTERVAL: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.set_interval),
                     *self.get_commands()
                 ],
                 self.SETTING_WEIGHTS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.set_weights),
                     *self.get_commands()
         ],
             },
@@ -431,6 +433,7 @@ class MitekBot:
         asyncio.get_event_loop().run_until_complete(self.set_commands(application))    
         
         application.add_handler(conv_handler)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.track_message))
         application.add_handler(CallbackQueryHandler(self.delete_phrase_callback, pattern='^delete_')) 
         application.add_error_handler(self.handle_error)
         application.run_polling(allowed_updates=Update.ALL_TYPES)
