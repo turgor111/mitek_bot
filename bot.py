@@ -296,12 +296,19 @@ class MitekBot:
     async def mention_or_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         logging.info(f"Mention or reply detected in chat {chat_id}.")
+        
         if not await self.check_user_name(update):
             return
+        
         if not self.recent_phrases.get(chat_id, None):
             self.recent_phrases[chat_id] = deque(maxlen=20)
-        phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
-        await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=update.message.message_id)
+        
+        reply = update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id
+        mention = update.message.entities and any(entity.type == "mention" and entity.user.id == context.bot.id for entity in update.message.entities)
+        
+        if reply or mention:
+            phrase = await self.select_random_phrase(chat_id, phrase_type='хуйня')
+            await context.bot.send_message(chat_id=chat_id, text=phrase, reply_to_message_id=update.message.message_id)
 
     async def set_weights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
